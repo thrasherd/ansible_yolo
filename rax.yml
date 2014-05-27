@@ -1,0 +1,72 @@
+---
+- hosts: localhost
+  connection: local
+  gather_facts: False
+  tasks:
+    
+    - name: Load Balancer create request
+      local_action:
+        module: rax_clb
+        credentials: ~/.rackspace_cloud_credentials
+        name: http-lb
+        port: 80
+        protocol: HTTP
+        algorithm: ROUND_ROBIN
+        type: PUBLIC
+        timeout: 30
+        region: IAD
+        wait: yes
+        state: present
+        meta:
+          app: wordpress
+      register: clb
+
+
+
+    - name: Rackspace | Cloud Servers
+      local_action:
+        module: rax
+        name: web%02d.example.org
+        credentials: ~/.rackspace_cloud_credentials
+        flavor: performance1-1
+        image: 042395fc-728c-4763-86f9-9b0cacb00701
+        key_name: master
+        count: 2
+        exact_count: yes
+        group: example.org
+        region: DFW
+        wait: yes
+        wait_timeout: 10000
+        state: present
+      register: rax
+
+    - name: Add successful instances to group 'raxhosts'
+      local_action:
+          module: add_host
+          hostname: "{{ item.name }}"
+          ansible_ssh_host: "{{ item.rax_accessipv4 }}"
+          groupname: raxhosts
+      with_items: rax.success
+    
+    - name: Add servers to Load balancer
+      local_action:
+        module: rax_clb_nodes
+        credentials: ~/.rackspace_cloud_credentials
+        load_balancer_id: "{{ clb.balancer.id }}"
+        address: "{{ item.rax_networks.private|first }}"
+        port: 80
+        condition: enabled
+        type: primary
+        wait: yes
+        region: IAD
+      with_items: rax.success
+      when: rax.action == 'create'
+    
+- name: Assign Roles
+  hosts: web*.example.org
+  user: root
+  roles:
+    - web
+    - db
+    - wordpress
+
